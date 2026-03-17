@@ -4,9 +4,7 @@
 A free, minimalist alternative to Microsoft Outlook that works offline-first and supports multiple accounts.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![GitHub release](https://img.shields.io/github/v/release/yourusername/openoutlook.svg)](https://github.com/yourusername/openoutlook/releases)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/yourusername/openoutlook/build.yml?branch=main)](https://github.com/yourusername/openoutlook/actions)
-[![Downloads](https://img.shields.io/github/downloads/yourusername/openoutlook/total)](https://github.com/yourusername/openoutlook/releases)
+
 
 ## ✨ Features
 
