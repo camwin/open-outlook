@@ -9,9 +9,10 @@ from email.header import decode_header
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import parsedate_to_datetime
+from datetime import datetime, timedelta
 import keyring
 from cryptography.fernet import Fernet
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget, QTreeWidgetItem, QTextEdit, QLabel, QPushButton, QCalendarWidget, QFrame, QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QMenuBar, QMenu, QMessageBox, QToolBar
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget, QTreeWidgetItem, QTextEdit, QLabel, QPushButton, QCalendarWidget, QFrame, QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QMenuBar, QMenu, QMessageBox, QToolBar, QCheckBox, QStyleFactory, QListWidget, QStackedWidget
 from PyQt5.QtCore import Qt, QDate, QSize
 from PyQt5.QtGui import QIcon, QFont, QTextCursor, QPixmap
 
@@ -103,6 +104,60 @@ class AccountSettingsDialog(QDialog):
         
         return settings
 
+class OptionsDialog(QDialog):
+    def __init__(self, parent=None, current_settings=None):
+        super().__init__(parent)
+        self.setWindowTitle("Mail Options")
+        self.setGeometry(200, 200, 500, 400)
+        self.settings = current_settings
+
+        # Main layout
+        main_layout = QHBoxLayout(self)
+        
+        # Left menu
+        self.list_widget = QListWidget()
+        self.list_widget.insertItem(0, "Signature")
+        self.list_widget.insertItem(1, "Sync")
+        self.list_widget.setMaximumWidth(120)
+        main_layout.addWidget(self.list_widget)
+
+        # Right side layout (stack + buttons)
+        right_layout = QVBoxLayout()
+
+        # Right content stack
+        self.stack_widget = QStackedWidget()
+        right_layout.addWidget(self.stack_widget)
+
+        # --- Signature Page ---
+        signature_page = QWidget()
+        signature_layout = QVBoxLayout(signature_page)
+        signature_layout.addWidget(QLabel("Edit your signature:"))
+        self.signature_edit = QTextEdit()
+        self.signature_edit.setPlainText(self.settings.get("signature", ""))
+        signature_layout.addWidget(self.signature_edit)
+        self.stack_widget.addWidget(signature_page)
+
+        # --- Sync Page ---
+        sync_page = QWidget()
+        sync_layout = QVBoxLayout(sync_page)
+        self.sync_check = QCheckBox("Update read/delete/archive status on the server")
+        self.sync_check.setChecked(self.settings.get("sync_changes_to_server", True))
+        sync_layout.addWidget(self.sync_check)
+        sync_layout.addStretch()
+        self.stack_widget.addWidget(sync_page)
+
+        # Dialog buttons
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        right_layout.addWidget(buttons)
+
+        main_layout.addLayout(right_layout)
+
+        # Connect list to stack
+        self.list_widget.currentRowChanged.connect(self.stack_widget.setCurrentIndex)
+        self.list_widget.setCurrentRow(0)
+
 class SortableTreeWidgetItem(QTreeWidgetItem):
     def __lt__(self, other):
         column = self.treeWidget().sortColumn()
@@ -175,6 +230,11 @@ class ComposeWindow(QDialog):
             quoted_body = f"\n\n---- Original Message ----\nFrom: {self.original_msg.get('from', '')}\nDate: {self.original_msg.get('date', '')}\nSubject: {self.original_msg.get('subject', '')}\nTo: {self.original_msg.get('to', '')}\n\n{self.original_msg.get('body', '')}"
             self.body_input.setText(quoted_body)
             self.body_input.moveCursor(QTextCursor.Start)
+        elif self.mode == 'new':
+            signature = self.parent_window.settings.get("signature", "")
+            if signature:
+                self.body_input.setText("\n\n" + signature)
+                self.body_input.moveCursor(QTextCursor.Start)
 
     def send(self):
         self.parent_window.send_email(self.account, self.to_input.text(), self.cc_input.text(), self.subject_input.text(), self.body_input.toPlainText())
@@ -231,6 +291,8 @@ class OutlookLookalike(QMainWindow):
 
         # Tools Menu
         tools_menu = QMenu("Tools", self)
+        options_action = tools_menu.addAction("Options...")
+        options_action.triggered.connect(self.open_options_dialog)
         menubar.addMenu(tools_menu)
 
         # Help Menu
@@ -250,7 +312,7 @@ class OutlookLookalike(QMainWindow):
         self.reply_all_button = QPushButton("Reply to All")
         self.forward_button = QPushButton("Forward")
         
-        self.new_button.clicked.connect(self.open_compose_window)
+        self.new_button.clicked.connect(lambda: self.open_compose_window())
         self.reply_button.clicked.connect(lambda: self.open_compose_window(mode='reply'))
         self.reply_all_button.clicked.connect(lambda: self.open_compose_window(mode='reply_all'))
         self.forward_button.clicked.connect(lambda: self.open_compose_window(mode='forward'))
@@ -265,6 +327,14 @@ class OutlookLookalike(QMainWindow):
         self.print_button = QPushButton("Print")
         self.print_button.clicked.connect(self.print_email)
         self.toolbar.addWidget(self.print_button)
+
+        self.mark_unread_button = QPushButton("Mark Unread")
+        self.mark_unread_button.clicked.connect(self.mark_as_unread)
+        self.toolbar.addWidget(self.mark_unread_button)
+
+        self.archive_button = QPushButton("Archive")
+        self.archive_button.clicked.connect(self.archive_email)
+        self.toolbar.addWidget(self.archive_button)
 
         self.delete_button = QPushButton("Delete")
         self.delete_button.clicked.connect(self.delete_email)
@@ -485,6 +555,11 @@ class OutlookLookalike(QMainWindow):
                 border-bottom: 1px solid #D0D0D0;
             }
         """)
+        
+        # Set Windows style to get the +/- indicators
+        if "Windows" in QStyleFactory.keys():
+            self.email_list.setStyle(QStyleFactory.create("Windows"))
+
         self.email_list.header().setStyleSheet("""
             QHeaderView::section {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #D0D0D0, stop:1 #C0C0C0);
@@ -501,14 +576,6 @@ class OutlookLookalike(QMainWindow):
         self.email_list.setAlternatingRowColors(True)
         self.email_list.setSortingEnabled(True)
         self.email_list.sortByColumn(2, Qt.DescendingOrder)
-
-        today_header = QTreeWidgetItem(self.email_list, ["Today"])
-        today_header.setFont(0, self.email_list.font())
-        today_header.setFlags(Qt.ItemIsEnabled)
-
-        yesterday_header = QTreeWidgetItem(self.email_list, ["Yesterday"])
-        yesterday_header.setFont(0, self.email_list.font())
-        today_header.setFlags(Qt.ItemIsEnabled)
 
         self.email_list.expandAll()
         self.email_middle_layout.addWidget(self.email_list)
@@ -638,6 +705,9 @@ class OutlookLookalike(QMainWindow):
         # Load emails from database
         self.load_emails_from_db()
 
+        # Sync with server on startup
+        self.send_receive_all(silent=True)
+
     def init_database(self):
         conn = sqlite3.connect(self.db_file)
         cursor = conn.cursor()
@@ -674,30 +744,27 @@ class OutlookLookalike(QMainWindow):
         conn.commit()
         conn.close()
 
-    def sync_emails(self, account):
+    def get_imap_connection(self, account):
         try:
             email_address = account["email"]
             auth_method = account.get("auth_method", "oauth") # Default to oauth for old accounts
-
             imap = imaplib.IMAP4_SSL(account["imap_server"], account["imap_port"])
 
             if auth_method == "oauth":
-                # Retrieve refresh token from keyring
                 refresh_token = keyring.get_password("OpenOutlook_RefreshToken", email_address)
                 if not refresh_token:
                     print(f"Refresh token not found for {email_address}")
-                    return
+                    return None
 
                 config_data = GOOGLE_CLIENT_CONFIG["installed"]
                 client_id = config_data["client_id"]
-                client_secret = config_data["client_secret"]
 
                 creds = Credentials(
                     None,
                     refresh_token=refresh_token,
                     token_uri="https://oauth2.googleapis.com/token",
                     client_id=client_id,
-                    client_secret=client_secret,
+                    client_secret=config_data["client_secret"],
                     scopes=["https://mail.google.com/"],
                 )
 
@@ -712,13 +779,43 @@ class OutlookLookalike(QMainWindow):
                 app_password = keyring.get_password("OpenOutlook_AppPassword", email_address)
                 if not app_password:
                     print(f"App password not found for {email_address}")
-                    return
+                    return None
                 imap.login(email_address, app_password)
 
+            return imap
+        except Exception as e:
+            print(f"IMAP Connection Error: {e}")
+            return None
+
+    def sync_emails(self, account):
+        try:
+            imap = self.get_imap_connection(account)
+            if not imap: return
+
+            email_address = account["email"]
             imap.select("INBOX")
-            _, message_numbers = imap.search(None, "ALL")
+            # Use UID search to ensure consistency with fetch
+            _, response = imap.uid('search', None, "ALL")
+            
+            # Get list of UIDs from server (as strings)
+            server_uids = [uid.decode() for uid in response[0].split()]
+
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
+
+            # Get list of UIDs from local database
+            cursor.execute("SELECT uid FROM emails WHERE account_email=? AND folder='INBOX'", (email_address,))
+            local_uids = [row[0] for row in cursor.fetchall()]
+
+            # Determine what to fetch and what to delete
+            uids_to_delete = set(local_uids) - set(server_uids)
+            uids_to_fetch = set(server_uids) - set(local_uids)
+
+            # Remove local emails that are no longer on the server
+            if uids_to_delete:
+                print(f"Sync: Removing {len(uids_to_delete)} deleted emails from local DB.")
+                cursor.executemany("DELETE FROM emails WHERE account_email=? AND folder='INBOX' AND uid=?", [(email_address, uid) for uid in uids_to_delete])
+                conn.commit()
 
             def decode_header_str(header):
                 if header is None:
@@ -732,9 +829,12 @@ class OutlookLookalike(QMainWindow):
                         header_str += part
                 return header_str
 
-            for num in message_numbers[0].split():
-                _, msg_data = imap.fetch(num, "(RFC822)")
-                if msg_data[0] is None:
+            # Fetch only new emails
+            if uids_to_fetch:
+                print(f"Sync: Fetching {len(uids_to_fetch)} new emails.")
+            for num in uids_to_fetch:
+                _, msg_data = imap.uid('fetch', num, "(RFC822)")
+                if not msg_data or msg_data[0] is None:
                     continue
                 
                 raw_email = msg_data[0][1]
@@ -773,7 +873,7 @@ class OutlookLookalike(QMainWindow):
                 cursor.execute("""
                     INSERT OR IGNORE INTO emails (account_email, uid, folder, subject, from_addr, to_addr, cc_addr, date, body, flags)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (email_address, num.decode(), "INBOX", subject, from_addr, to_addr, cc_addr, date, encrypted_body, "UNREAD"))
+                """, (email_address, num, "INBOX", subject, from_addr, to_addr, cc_addr, date, encrypted_body, "UNREAD"))
             
             conn.commit()
             conn.close()
@@ -781,7 +881,7 @@ class OutlookLookalike(QMainWindow):
             # Refresh the email list
             self.load_emails_from_db()
         except Exception as e:
-            print(f"Failed to sync emails: {e}") # This will now print more specific errors from parsing
+            print(f"Failed to sync emails: {e}")
 
     def load_emails_from_db(self):
         self.email_list.clear()
@@ -792,13 +892,31 @@ class OutlookLookalike(QMainWindow):
         account_email = self.settings["accounts"][0]["email"]
 
         conn = sqlite3.connect(self.db_file)
+        # Need to include flags in the selection
         cursor = conn.cursor()
-        cursor.execute("SELECT from_addr, to_addr, cc_addr, subject, date, body, uid FROM emails WHERE folder='INBOX' AND account_email=?", (account_email,))
+        cursor.execute("SELECT from_addr, to_addr, cc_addr, subject, date, body, uid, flags FROM emails WHERE folder='INBOX' AND account_email=?", (account_email,))
         emails = cursor.fetchall()
-        today_header = QTreeWidgetItem(self.email_list, ["Today"])
-        today_header.setFlags(Qt.ItemIsEnabled)
+        conn.close()
+
+        # Sorting by date (newest first) in Python to handle grouping easier
+        def parse_date(date_str):
+            try:
+                return parsedate_to_datetime(date_str).astimezone()
+            except:
+                return datetime.min.replace(tzinfo=None)
+
+        emails.sort(key=lambda x: parse_date(x[4]), reverse=True)
+
+        groups = {}
+        group_by_conversation = self.settings.get("group_by_conversation", False)
+        
+        # Prepare Date comparison
+        now = datetime.now().astimezone()
+        today_date = now.date()
+        yesterday_date = today_date - timedelta(days=1)
+
         for email_record in emails:
-            from_addr, to_addr, cc_addr, subject, date_str, encrypted_body, uid = email_record
+            from_addr, to_addr, cc_addr, subject, date_str, encrypted_body, uid, flags = email_record
             # Decrypt the email body
             try:
                 body = self.cipher.decrypt(encrypted_body).decode('utf-8')
@@ -806,7 +924,45 @@ class OutlookLookalike(QMainWindow):
                 print(f"Failed to decrypt email UID {uid}: {e}")
                 body = "Failed to decrypt email"
             
-            item = SortableTreeWidgetItem(today_header, [from_addr, subject, date_str])
+            # Determine Parent Group
+            parent_item = None
+            if group_by_conversation:
+                # Normalize subject (remove Re:, Fw:)
+                normalized_subject = subject.lower().replace("re: ", "").replace("fw: ", "").strip()
+                if normalized_subject not in groups:
+                    group_item = QTreeWidgetItem(self.email_list, [normalized_subject])
+                    group_item.setFlags(Qt.ItemIsEnabled)
+                    group_item.setFont(0, self.email_list.font())
+                    groups[normalized_subject] = group_item
+                parent_item = groups[normalized_subject]
+            else:
+                # Group by Date
+                dt = parse_date(date_str)
+                email_date = dt.date()
+                
+                if email_date == today_date:
+                    group_label = "Today"
+                elif email_date == yesterday_date:
+                    group_label = "Yesterday"
+                else:
+                    group_label = email_date.strftime("%A, %B %d")
+                
+                if group_label not in groups:
+                    group_item = QTreeWidgetItem(self.email_list, [group_label])
+                    group_item.setFlags(Qt.ItemIsEnabled)
+                    group_item.setFont(0, self.email_list.font())
+                    # Ensure Today/Yesterday are at top if not sorting logic handles it (list is pre-sorted)
+                    groups[group_label] = group_item
+                parent_item = groups[group_label]
+            
+            item = SortableTreeWidgetItem(parent_item, [from_addr, subject, date_str])
+            
+            # Apply Bold if Unread
+            if "UNREAD" in flags:
+                bold_font = QFont(item.font(0))
+                bold_font.setBold(True)
+                for i in range(3):
+                    item.setFont(i, bold_font)
             
             # Parse and store the datetime object for sorting
             try:
@@ -823,11 +979,12 @@ class OutlookLookalike(QMainWindow):
                 'subject': subject,
                 'body': body,
                 'date': date_str,
-                'uid': uid
+                'uid': uid,
+                'flags': flags
             }
             item.setData(0, Qt.UserRole, email_data)
+
         self.email_list.expandAll()
-        conn.close()
         # Connect the email list to update the preview pane
         self.email_list.itemClicked.connect(self.update_preview)
 
@@ -841,6 +998,17 @@ class OutlookLookalike(QMainWindow):
         subject = item.text(1)
         self.preview_header.setText(f"<b>{subject}</b><br>From: {from_addr}")
         self.preview_text.setText(body)
+
+        # Mark as Read
+        if "UNREAD" in email_data.get('flags', ''):
+            email_data['flags'] = email_data['flags'].replace("UNREAD", "READ")
+            item.setData(0, Qt.UserRole, email_data)
+            # Update DB
+            self.update_email_flag(email_data['uid'], "READ")
+            # Update UI
+            normal_font = QFont(item.font(0))
+            normal_font.setBold(False)
+            for i in range(3): item.setFont(i, normal_font)
 
     def load_settings(self):
         if os.path.exists(self.settings_file):
@@ -959,6 +1127,57 @@ class OutlookLookalike(QMainWindow):
             print(f"Failed to send email: {e}")
             QMessageBox.critical(self, "Send Error", f"Failed to send email: {e}")
 
+    def update_email_flag(self, uid, flag_status):
+        if not self.settings["accounts"]: return
+        account_email = self.settings["accounts"][0]["email"]
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE emails SET flags=? WHERE uid=? AND account_email=?", (flag_status, uid, account_email))
+        conn.commit()
+        conn.close()
+
+        # Sync to server
+        if self.settings.get("sync_changes_to_server", True):
+            if self.settings["accounts"]:
+                account = self.settings["accounts"][0]
+                imap = self.get_imap_connection(account)
+                if imap:
+                    try:
+                        imap.select("INBOX")
+                        # IMAP flag for read is \Seen
+                        imap_flag = '\\Seen'
+                        action = '+FLAGS' if flag_status == "READ" else '-FLAGS'
+                        imap.uid('STORE', uid, action, f'({imap_flag})')
+                        imap.logout()
+                    except Exception as e:
+                        print(f"Failed to sync flag to server: {e}")
+
+    def mark_as_unread(self):
+        item = self.email_list.currentItem()
+        if not item or not item.parent(): return
+        
+        email_data = item.data(0, Qt.UserRole)
+        if not email_data: return
+        
+        # Update Data
+        email_data['flags'] = "UNREAD"
+        item.setData(0, Qt.UserRole, email_data)
+        
+        # Update DB
+        self.update_email_flag(email_data['uid'], "UNREAD")
+        
+        # Update UI
+        bold_font = QFont(item.font(0))
+        bold_font.setBold(True)
+        for i in range(3): item.setFont(i, bold_font)
+
+    def open_options_dialog(self):
+        dialog = OptionsDialog(self, self.settings)
+        if dialog.exec_() == QDialog.Accepted:
+            self.settings["signature"] = dialog.signature_edit.toPlainText()
+            self.settings["sync_changes_to_server"] = dialog.sync_check.isChecked()
+            self.save_settings()
+
     def show_about_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("About OpenOutlook")
@@ -978,6 +1197,61 @@ class OutlookLookalike(QMainWindow):
     def print_email(self):
         QMessageBox.information(self, "Print", "Printing functionality is not yet implemented.")
 
+    def archive_email(self):
+        item = self.email_list.currentItem()
+        if not item or not item.parent(): return
+
+        email_data = item.data(0, Qt.UserRole)
+        if not email_data: return
+        uid = email_data.get('uid')
+        if not uid: return
+
+        # Server side
+        if self.settings.get("sync_changes_to_server", True):
+            if self.settings["accounts"]:
+                account = self.settings["accounts"][0]
+                imap = self.get_imap_connection(account)
+                if imap:
+                    try:
+                        imap.select("INBOX")
+                        # Try to find a suitable archive folder or create one
+                        archive_folder = "Archive"
+                        
+                        # Check if Archive exists (simple check, assume created if copy fails we handle ex)
+                        # Note: Gmail uses "[Gmail]/All Mail" for archiving usually, but generic IMAP uses folders.
+                        # We'll try to COPY to 'Archive' and then mark Deleted.
+                        try:
+                            imap.create(archive_folder) # Ensure it exists
+                        except: pass
+                        
+                        imap.uid('COPY', uid, archive_folder)
+                        imap.uid('STORE', uid, '+FLAGS', '(\\Deleted)')
+                        imap.expunge()
+                        imap.logout()
+                        
+                        QMessageBox.information(self, "Archive", "Email archived.")
+                    except Exception as e:
+                        QMessageBox.warning(self, "Archive Error", f"Failed to archive: {e}")
+        # Local delete always happens
+        self.delete_email_local(item, uid)
+
+    def delete_email_local(self, item, uid):
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        if self.settings["accounts"]:
+            account_email = self.settings["accounts"][0]["email"]
+            cursor.execute("DELETE FROM emails WHERE uid=? AND account_email=?", (uid, account_email))
+            conn.commit()
+        conn.close()
+        
+        try:
+            if item.parent():
+                item.parent().removeChild(item)
+        except RuntimeError:
+            pass
+        self.preview_header.setText("")
+        self.preview_text.clear()
+
     def delete_email(self):
         item = self.email_list.currentItem()
         if not item or not item.parent():
@@ -988,26 +1262,32 @@ class OutlookLookalike(QMainWindow):
         uid = email_data.get('uid')
         if not uid: return
 
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        # Assuming first account for now
-        if self.settings["accounts"]:
-            account_email = self.settings["accounts"][0]["email"]
-            cursor.execute("DELETE FROM emails WHERE uid=? AND account_email=?", (uid, account_email))
-            conn.commit()
-        conn.close()
+        # Server delete
+        if self.settings.get("sync_changes_to_server", True):
+            if self.settings["accounts"]:
+                account = self.settings["accounts"][0]
+                imap = self.get_imap_connection(account)
+                if imap:
+                    try:
+                        imap.select("INBOX")
+                        imap.uid('STORE', uid, '+FLAGS', '(\\Deleted)')
+                        imap.expunge()
+                        imap.logout()
+                    except Exception as e:
+                        print(f"Failed to delete from server: {e}")
 
-        item.parent().removeChild(item)
-        self.preview_header.setText("")
-        self.preview_text.clear()
+        # Local delete
+        self.delete_email_local(item, uid)
 
-    def send_receive_all(self):
+    def send_receive_all(self, silent=False):
         if self.settings.get("accounts"):
             for account in self.settings["accounts"]:
                 self.sync_emails(account)
-            QMessageBox.information(self, "Sync", "Send/Receive completed.")
+            if not silent:
+                QMessageBox.information(self, "Sync", "Send/Receive completed.")
         else:
-            QMessageBox.warning(self, "Sync", "No accounts configured.")
+            if not silent:
+                QMessageBox.warning(self, "Sync", "No accounts configured.")
 
     def open_find_dialog(self):
         QMessageBox.information(self, "Find", "Advanced Find dialog is coming soon.")
