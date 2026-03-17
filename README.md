@@ -1,7 +1,7 @@
 # OpenOutlook
 
-**Modern, open-source email & calendar client**  
-A free, privacy-respecting alternative to Microsoft Outlook that works offline-first and supports multiple accounts.
+**Modern, open-source email & calendar client in the spirit of Outlook 2003**  
+A free, minimalist alternative to Microsoft Outlook that works offline-first and supports multiple accounts.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![GitHub release](https://img.shields.io/github/v/release/yourusername/openoutlook.svg)](https://github.com/yourusername/openoutlook/releases)
