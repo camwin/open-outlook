@@ -13,8 +13,8 @@ A free, minimalist alternative to Microsoft Outlook that works offline-first and
 - Focused Inbox (smart sorting of important vs. other mail)
 - Offline access & full email caching
 - End-to-end encryption support (PGP/OpenPGP & S/MIME)
-- Clean, modern UI with light/dark mode and customizable themes
+- Clean, modern UI
 - Keyboard shortcuts inspired by Outlook + Gmail
 - Rules & filters (client-side)
 - Search that actually works (full-text + fast indexing)
-- Cross-platform: Windows, macOS, Linux (desktop), with mobile apps in development
+- Cross-platform: Windows, macOS, Linux (desktop)
